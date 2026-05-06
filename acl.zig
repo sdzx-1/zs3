@@ -1,10 +1,12 @@
 const std = @import("std");
 
+// 252 = SigV4 k_secret buffer (256) minus the 4-byte "AWS4" prefix.
+pub const MAX_KEY_LEN: usize = 252;
+
 pub const Role = enum {
     Admin,
     Reader,
     Writer,
-    Unknown,
 };
 
 pub const Credential = struct {
@@ -13,20 +15,34 @@ pub const Credential = struct {
     role: Role,
 };
 
-// Function to convert string to Role enum
 pub fn stringToRole(role_str: []const u8) !Role {
-    if (std.mem.eql(u8, role_str, "admin")) {
-        return Role.Admin;
-    } else if (std.mem.eql(u8, role_str, "reader")) {
-        return Role.Reader;
-    } else if (std.mem.eql(u8, role_str, "writer")) {
-        return Role.Writer;
-    } else {
-        return error.BadCredentialRole;
-    }
+    if (std.mem.eql(u8, role_str, "admin")) return .Admin;
+    if (std.mem.eql(u8, role_str, "reader")) return .Reader;
+    if (std.mem.eql(u8, role_str, "writer")) return .Writer;
+    return error.BadCredentialRole;
 }
 
-// Function to parse a single credential string: "role:access_key:secret_key"
+// Permission model:
+//   Admin  : all methods
+//   Writer : read + write (GET, HEAD, OPTIONS, PUT, POST, DELETE)
+//   Reader : read-only    (GET, HEAD, OPTIONS)
+pub fn roleAllowsMethod(role: Role, method: []const u8) bool {
+    return switch (role) {
+        .Admin => true,
+        .Reader => std.mem.eql(u8, method, "GET") or
+            std.mem.eql(u8, method, "HEAD") or
+            std.mem.eql(u8, method, "OPTIONS"),
+        .Writer => std.mem.eql(u8, method, "GET") or
+            std.mem.eql(u8, method, "HEAD") or
+            std.mem.eql(u8, method, "OPTIONS") or
+            std.mem.eql(u8, method, "PUT") or
+            std.mem.eql(u8, method, "POST") or
+            std.mem.eql(u8, method, "DELETE"),
+    };
+}
+
+// Parse a single credential string: "role:access_key:secret_key".
+// Note: secret_key cannot contain ':'.
 pub fn parseCredential(cred_str: []const u8) !Credential {
     var itr = std.mem.splitScalar(u8, cred_str, ':');
 
@@ -34,12 +50,13 @@ pub fn parseCredential(cred_str: []const u8) !Credential {
     const access_key = itr.next() orelse return error.BadCredentialFormat;
     const secret_key = itr.next() orelse return error.BadCredentialFormat;
 
-    // Reject extra fields
     if (itr.next() != null) return error.BadCredentialFormat;
 
-    // Reject empty fields
     if (role_str.len == 0 or access_key.len == 0 or secret_key.len == 0)
         return error.BadCredentialFormat;
+
+    if (access_key.len > MAX_KEY_LEN or secret_key.len > MAX_KEY_LEN)
+        return error.CredentialKeyTooLong;
 
     return Credential{
         .role = try stringToRole(role_str),
@@ -48,21 +65,16 @@ pub fn parseCredential(cred_str: []const u8) !Credential {
     };
 }
 
-// Function to parse a list of credential strings
 pub fn parseCredentials(allocator: std.mem.Allocator, input: []const u8) ![]Credential {
-    if (input.len == 0) {
-        return error.BadCredentialInputFormat;
-    }
+    if (input.len == 0) return error.BadCredentialInputFormat;
 
     var credentials = std.ArrayListUnmanaged(Credential){};
     errdefer credentials.deinit(allocator);
 
     var itr = std.mem.splitScalar(u8, input, ',');
     while (itr.next()) |record| {
-        if (record.len == 0) continue;
-
+        if (record.len == 0) return error.BadCredentialInputFormat;
         const pc = try parseCredential(record);
-
         try credentials.append(allocator, pc);
     }
 

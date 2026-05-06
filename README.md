@@ -48,11 +48,30 @@ If you need these, use MinIO or AWS.
 ## Quick Start
 
 ```bash
-zig build -Doptimize=ReleaseFast -Dacl-list="admin:minioadmin:minioadmin"
+zig build -Doptimize=ReleaseFast
 ./zig-out/bin/zs3
 ```
 
-Server listens on port 9000, stores data in `./data`.
+Server listens on port 9000, stores data in `./data`. Default credentials are
+`minioadmin:minioadmin` (admin role) — **do not use in production**.
+
+### Credentials & roles
+
+Provide credentials at build time (`-Dacl-list=`) or runtime (`--acl=`):
+
+```bash
+./zig-out/bin/zs3 --acl="admin:akey:asec,reader:rkey:rsec,writer:wkey:wsec"
+```
+
+Format: `role:access_key:secret_key`, comma-separated. Roles:
+
+| Role   | Allowed methods                              |
+|--------|----------------------------------------------|
+| admin  | all                                          |
+| writer | GET, HEAD, OPTIONS, PUT, POST, DELETE        |
+| reader | GET, HEAD, OPTIONS                           |
+
+Other useful flags: `--port=PORT`, `--data-dir=PATH`, `--help`.
 
 ## Distributed Mode
 

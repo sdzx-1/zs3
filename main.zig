@@ -6,15 +6,6 @@ const builtin = @import("builtin");
 const build_options = @import("build_options");
 const acl = @import("acl.zig");
 
-const HTTP_METHOD = enum {
-    GET,
-    POST,
-    PUT,
-    DELETE,
-    HEAD,
-    OPTIONS,
-};
-
 const MAX_HEADER_SIZE = 8 * 1024;
 const MAX_BODY_SIZE = 5 * 1024 * 1024 * 1024;
 const MAX_KEY_LENGTH = 1024;
@@ -1042,8 +1033,15 @@ pub fn main() !void {
         return;
     }
 
-    const access_control_list = try acl.parseCredentials(allocator, raw_acl_list);
+    const access_control_list = acl.parseCredentials(allocator, raw_acl_list) catch |err| {
+        std.log.err("Invalid --acl / -Dacl-list value: {s}", .{@errorName(err)});
+        return err;
+    };
     defer allocator.free(access_control_list);
+
+    if (std.mem.eql(u8, raw_acl_list, "admin:minioadmin:minioadmin")) {
+        std.log.warn("Using built-in default credentials (admin:minioadmin:minioadmin) — DO NOT USE IN PRODUCTION", .{});
+    }
 
     std.fs.cwd().makeDir(data_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
@@ -1091,25 +1089,18 @@ pub fn main() !void {
         };
     }
 
+    // Keys reference slices in raw_acl_list (argv or build_options string), both of
+    // which outlive the process — safe to store as map keys without copying.
     var access_control_map = std.StringHashMap(acl.Credential).init(allocator);
     errdefer access_control_map.deinit();
 
     for (access_control_list) |credential| {
-        if (credential.secret_key.len > 252) { // 252 due to k_secret_buf.len and prefix of `AWS4`
-            // Never log the secret_key itself...
-            std.log.err("ACL credential '{s}' has a secret key exceeding 252 bytes; skipping", .{credential.access_key});
-            continue;
+        const gop = try access_control_map.getOrPut(credential.access_key);
+        if (gop.found_existing) {
+            std.log.err("Duplicate access key '{s}' in ACL list", .{credential.access_key});
+            return error.DuplicateAccessKey;
         }
-
-        if (credential.access_key.len > 252) { // 252 to match secret_key.len
-            std.log.err("ACL credential '{s}' has an access key exceeding 252 bytes; skipping", .{credential.access_key});
-            continue;
-        }
-
-        // The key is the slice contents, not the pointer address
-        access_control_map.put(credential.access_key, credential) catch |err| {
-            return err;
-        };
+        gop.value_ptr.* = credential;
     }
 
     var ctx = S3Context{
@@ -1749,49 +1740,18 @@ pub const SigV4 = struct {
 
     const ACLCtx = struct {
         authenticated: bool,
-        role: acl.Role,
+        role: ?acl.Role,
 
         fn granted(self: *const ACLCtx, method: []const u8) bool {
-            switch (self.role) {
-                acl.Role.Admin => {
-                    return true;
-                },
-                acl.Role.Reader => {
-                    const http_method = std.meta.stringToEnum(HTTP_METHOD, method) orelse {
-                        return false;
-                    };
-
-                    switch (http_method) {
-                        .GET => return true,
-                        .HEAD => return true,
-                        .OPTIONS => return true,
-                        else => return false,
-                    }
-                },
-                acl.Role.Writer => {
-                    const http_method = std.meta.stringToEnum(HTTP_METHOD, method) orelse {
-                        return false;
-                    };
-
-                    switch (http_method) {
-                        .PUT => return true,
-                        .POST => return true,
-                        .HEAD => return true,
-                        .OPTIONS => return true,
-                        else => return false,
-                    }
-                },
-                acl.Role.Unknown => {
-                    return false;
-                },
-            }
+            const role = self.role orelse return false;
+            return acl.roleAllowsMethod(role, method);
         }
     };
 
     fn verify(ctx: *const S3Context, req: *const Request, allocator: Allocator) ACLCtx {
         var acl_ctx = ACLCtx{
             .authenticated = false,
-            .role = acl.Role.Unknown,
+            .role = null,
         };
 
         const auth_header = req.header("authorization") orelse return acl_ctx;

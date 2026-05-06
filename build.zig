@@ -6,11 +6,15 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const strip = b.option(bool, "strip", "Strip debug symbols") orelse (optimize != .Debug);
 
-    const acl_list = b.option([]const u8, "acl-list", "Admin credentials") orelse "admin:minioadmin:minioadmin";
-    _ = try acl.parseCredentials(b.allocator, acl_list);
+    const acl_list = b.option([]const u8, "acl-list", "Credential list: role:access:secret[,role:access:secret...]") orelse "admin:minioadmin:minioadmin";
+    const data_dir = b.option([]const u8, "data-dir", "Default data directory") orelse "data";
+
+    const parsed = try acl.parseCredentials(b.allocator, acl_list);
+    b.allocator.free(parsed);
 
     const options = b.addOptions();
     options.addOption([]const u8, "acl_list", acl_list);
+    options.addOption([]const u8, "data_dir", data_dir);
 
     const exe = b.addExecutable(.{
         .name = "zs3",
