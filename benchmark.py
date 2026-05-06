@@ -269,80 +269,89 @@ def main():
     parser = argparse.ArgumentParser(description="Benchmark S3-compatible servers")
     parser.add_argument("--zs3", default="http://localhost:9000", help="zs3 endpoint")
     parser.add_argument("--rustfs", default="http://localhost:9001", help="RustFS endpoint")
-    parser.add_argument("--access-key", default="minioadmin", help="Access key")
-    parser.add_argument("--secret-key", default="minioadmin", help="Secret key")
+    parser.add_argument("--garage", default="http://localhost:3900", help="Garage endpoint")
+    parser.add_argument("--access-key", default="minioadmin", help="Default access key (zs3/rustfs)")
+    parser.add_argument("--secret-key", default="minioadmin", help="Default secret key (zs3/rustfs)")
+    parser.add_argument("--garage-access-key", default=None, help="Garage access key (defaults to --access-key)")
+    parser.add_argument("--garage-secret-key", default=None, help="Garage secret key (defaults to --secret-key)")
     parser.add_argument("--iterations", type=int, default=100, help="Iterations per test")
     parser.add_argument("--concurrency", type=int, default=50, help="Concurrent workers")
     parser.add_argument("--requests-per-worker", type=int, default=20, help="Requests per worker")
-    parser.add_argument("--only", choices=["zs3", "rustfs", "both"], default="both", help="Which server to benchmark")
+    parser.add_argument("--only", default="zs3,rustfs",
+                        help="Comma-separated servers to benchmark from {zs3,rustfs,garage} (e.g. 'zs3,garage')")
     parser.add_argument("--mode", choices=["sequential", "concurrent", "all"], default="all", help="Benchmark mode")
     args = parser.parse_args()
+
+    available = {
+        "zs3":    ("zs3",    args.zs3,    args.access_key, args.secret_key),
+        "rustfs": ("RustFS", args.rustfs, args.access_key, args.secret_key),
+        "garage": ("Garage", args.garage,
+                   args.garage_access_key or args.access_key,
+                   args.garage_secret_key or args.secret_key),
+    }
+    selected = [s.strip() for s in args.only.split(",") if s.strip()]
+    targets = []
+    for key in selected:
+        if key not in available:
+            print(f"Unknown server '{key}' — choose from {list(available)}")
+            return
+        targets.append((key, *available[key]))
 
     all_results = {}
     concurrent_results = {}
 
     if args.mode in ("sequential", "all"):
-        if args.only in ("zs3", "both"):
+        for key, label, endpoint, ak, sk in targets:
             try:
-                results = benchmark("zs3", args.zs3, args.access_key, args.secret_key, args.iterations)
+                results = benchmark(label, endpoint, ak, sk, args.iterations)
                 if results:
-                    all_results["zs3"] = results
-                    print_results(results, "zs3")
+                    all_results[key] = (label, results)
+                    print_results(results, label)
             except Exception as e:
-                print(f"zs3 benchmark failed: {e}")
+                print(f"{label} benchmark failed: {e}")
 
-        if args.only in ("rustfs", "both"):
-            try:
-                results = benchmark("RustFS", args.rustfs, args.access_key, args.secret_key, args.iterations)
-                if results:
-                    all_results["rustfs"] = results
-                    print_results(results, "RustFS")
-            except Exception as e:
-                print(f"RustFS benchmark failed: {e}")
-
-        if len(all_results) == 2:
-            print(f"\n{'='*60}")
-            print("Comparison (zs3 vs RustFS)")
-            print(f"{'='*60}")
-            print(f"{'Operation':<15} {'zs3':>12} {'RustFS':>12} {'Speedup':>10}")
-            print("-" * 60)
-            for op in all_results["zs3"]:
-                if all_results["zs3"][op] and all_results["rustfs"][op]:
-                    zs3_mean = statistics.mean(all_results["zs3"][op]) * 1000
-                    rustfs_mean = statistics.mean(all_results["rustfs"][op]) * 1000
-                    speedup = rustfs_mean / zs3_mean if zs3_mean > 0 else 0
-                    winner = "zs3" if speedup > 1 else "RustFS"
-                    print(f"{op:<15} {zs3_mean:>10.2f}ms {rustfs_mean:>10.2f}ms {speedup:>8.2f}x ({winner})")
+        if len(all_results) >= 2:
+            baseline_key = "zs3" if "zs3" in all_results else next(iter(all_results))
+            base_label, base_res = all_results[baseline_key]
+            for key, (label, res) in all_results.items():
+                if key == baseline_key:
+                    continue
+                print(f"\n{'='*60}")
+                print(f"Comparison ({base_label} vs {label})")
+                print(f"{'='*60}")
+                print(f"{'Operation':<15} {base_label:>12} {label:>12} {'Speedup':>10}")
+                print("-" * 60)
+                for op in base_res:
+                    if base_res[op] and res.get(op):
+                        a = statistics.mean(base_res[op]) * 1000
+                        b = statistics.mean(res[op]) * 1000
+                        speedup = b / a if a > 0 else 0
+                        winner = base_label if speedup > 1 else label
+                        print(f"{op:<15} {a:>10.2f}ms {b:>10.2f}ms {speedup:>8.2f}x ({winner})")
 
     if args.mode in ("concurrent", "all"):
-        if args.only in ("zs3", "both"):
+        for key, label, endpoint, ak, sk in targets:
             try:
-                results = concurrent_benchmark("zs3", args.zs3, args.access_key, args.secret_key, args.concurrency, args.requests_per_worker)
+                results = concurrent_benchmark(label, endpoint, ak, sk, args.concurrency, args.requests_per_worker)
                 if results:
-                    concurrent_results["zs3"] = results
-                    print_concurrent_results(results, "zs3")
+                    concurrent_results[key] = (label, results)
+                    print_concurrent_results(results, label)
             except Exception as e:
-                print(f"zs3 concurrent benchmark failed: {e}")
+                print(f"{label} concurrent benchmark failed: {e}")
 
-        if args.only in ("rustfs", "both"):
-            try:
-                results = concurrent_benchmark("RustFS", args.rustfs, args.access_key, args.secret_key, args.concurrency, args.requests_per_worker)
-                if results:
-                    concurrent_results["rustfs"] = results
-                    print_concurrent_results(results, "RustFS")
-            except Exception as e:
-                print(f"RustFS concurrent benchmark failed: {e}")
-
-        if len(concurrent_results) == 2:
-            print(f"\n{'='*60}")
-            print("Concurrent Comparison (zs3 vs RustFS)")
-            print(f"{'='*60}")
-            zs3 = concurrent_results["zs3"]
-            rustfs = concurrent_results["rustfs"]
-            throughput_speedup = zs3["throughput"] / rustfs["throughput"] if rustfs["throughput"] > 0 else 0
-            latency_speedup = rustfs["mean_latency"] / zs3["mean_latency"] if zs3["mean_latency"] > 0 else 0
-            print(f"  Throughput:  zs3 {zs3['throughput']:.1f} req/s vs RustFS {rustfs['throughput']:.1f} req/s ({throughput_speedup:.1f}x)")
-            print(f"  Latency:     zs3 {zs3['mean_latency']:.2f}ms vs RustFS {rustfs['mean_latency']:.2f}ms ({latency_speedup:.1f}x faster)")
+        if len(concurrent_results) >= 2:
+            baseline_key = "zs3" if "zs3" in concurrent_results else next(iter(concurrent_results))
+            base_label, base = concurrent_results[baseline_key]
+            for key, (label, r) in concurrent_results.items():
+                if key == baseline_key:
+                    continue
+                print(f"\n{'='*60}")
+                print(f"Concurrent Comparison ({base_label} vs {label})")
+                print(f"{'='*60}")
+                throughput_speedup = base["throughput"] / r["throughput"] if r["throughput"] > 0 else 0
+                latency_speedup = r["mean_latency"] / base["mean_latency"] if base["mean_latency"] > 0 else 0
+                print(f"  Throughput:  {base_label} {base['throughput']:.1f} req/s vs {label} {r['throughput']:.1f} req/s ({throughput_speedup:.1f}x)")
+                print(f"  Latency:     {base_label} {base['mean_latency']:.2f}ms vs {label} {r['mean_latency']:.2f}ms ({latency_speedup:.1f}x faster)")
 
 if __name__ == "__main__":
     main()

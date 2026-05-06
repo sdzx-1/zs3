@@ -213,7 +213,38 @@ Requires `pip install boto3` for comprehensive tests.
 | Throughput | 5,000+ req/s | 174 req/s | **29x** |
 | Latency (mean) | 8.8ms | 277ms | **31x faster** |
 
+### vs Garage (100 iterations)
+
+[Garage](https://garagehq.deuxfleurs.fr/) is another S3-compatible server (single-node, default config, lmdb backend, replication_factor=1).
+
+| Operation | zs3 | Garage | Speedup |
+|-----------|-----|--------|---------|
+| PUT 1KB | 1.05ms | 11.12ms | **11x** |
+| PUT 1MB | 4.95ms | 71.54ms | **14x** |
+| GET 1KB | 1.44ms | 9.47ms | **7x** |
+| GET 1MB | 4.92ms | 55.81ms | **11x** |
+| LIST | 4.68ms | 35.69ms | **8x** |
+| DELETE | 1.58ms | 12.07ms | **8x** |
+
+### Concurrent vs Garage (50 workers, 1000 requests)
+
+| Metric | zs3 | Garage | Advantage |
+|--------|-----|--------|-----------|
+| Throughput | 4,326 req/s | 147 req/s | **29x** |
+| Latency (mean) | 11.0ms | 324ms | **29x faster** |
+
 Run your own: `python3 benchmark.py`
+
+To bench against Garage, spin it up with the bundled compose file:
+
+```sh
+cd bench && ./init-garage.sh
+# prints access_key_id / secret_access_key for the created bench-key
+python3 ../benchmark.py --only zs3,garage \
+  --garage-access-key <ID> --garage-secret-key <SECRET>
+```
+
+`--only` accepts any combo of `zs3,rustfs,garage`.
 
 ## Limits
 
