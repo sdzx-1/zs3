@@ -478,6 +478,9 @@ fn parseRequestFromBuf(allocator: Allocator, data: []const u8, stream: net.Strea
 }
 
 fn hasAuth(data: []const u8) bool {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     if (data.len < 14) return false;
     const needle = "authorization:";
     const end = data.len - 13;
@@ -505,6 +508,9 @@ fn hasAuth(data: []const u8) bool {
 }
 
 fn findHeaderEnd(data: []const u8) ?usize {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     if (data.len < 4) return null;
     const end = data.len - 3;
     const ptr = data.ptr;
@@ -519,6 +525,9 @@ fn findHeaderEnd(data: []const u8) ?usize {
 
 fn handleConnectionWithStream(allocator: Allocator, ctx: *const S3Context, stream: net.Stream) !bool {
     tracy.frameMark();
+
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
 
     var buf: [MAX_HEADER_SIZE]u8 = undefined;
     var total_read: usize = 0;
