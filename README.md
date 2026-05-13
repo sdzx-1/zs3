@@ -227,3 +227,61 @@ TLS not included. Use a reverse proxy (nginx, caddy) for HTTPS.
 ## License
 
 [WTFPL](LICENSE) - Read it, fork it, break it.
+## Bench result in my pc
+```shll
+env ❯ python3 benchmark.py --only zs3
+
+============================================================
+Benchmarking: zs3
+Endpoint: http://localhost:9000
+Iterations: 100
+============================================================
+  PUT 1kb... 100 ok
+  PUT 4kb... 100 ok
+  PUT 64kb... 100 ok
+  PUT 1mb... 100 ok
+  GET 1kb... 100 ok
+  GET 4kb... 100 ok
+  GET 64kb... 100 ok
+  GET 1mb... 100 ok
+  LIST... 100 ok
+  DELETE... 400 ok
+
+============================================================
+Results: zs3
+============================================================
+Operation             Mean     Median        P99    Ops/sec
+------------------------------------------------------------
+create_bucket        5.53ms      5.53ms      5.53ms      180.9
+put_1kb              0.36ms      0.36ms      0.49ms     2796.0
+put_4kb              0.29ms      0.27ms      0.40ms     3472.0
+put_64kb             0.42ms      0.41ms      0.52ms     2403.0
+put_1mb              1.42ms      1.40ms      1.78ms      704.9
+get_1kb              0.26ms      0.25ms      0.34ms     3878.0
+get_4kb              0.25ms      0.24ms      0.31ms     4026.9
+get_64kb             0.29ms      0.28ms      0.36ms     3472.5
+get_1mb              0.78ms      0.76ms      1.14ms     1280.2
+list                 0.61ms      0.60ms      0.74ms     1651.7
+delete               0.30ms      0.29ms      0.46ms     3334.5
+
+============================================================
+Concurrent Benchmark: zs3
+Endpoint: http://localhost:9000
+Concurrency: 50 workers, 20 requests each
+Total requests: 1000
+============================================================
+  Running concurrent GET requests... 1000 ok, 0 failed
+
+============================================================
+Concurrent Results: zs3
+============================================================
+  Total time:     0.22s
+  Requests:       1000/1000 successful
+  Throughput:     4469.6 req/s
+  Latency mean:   9.21ms
+  Latency median: 9.31ms
+  Latency p99:    18.87ms
+  Latency min:    0.35ms
+  Latency max:    27.35ms
+    
+```
