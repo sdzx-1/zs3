@@ -4,6 +4,8 @@ const posix = std.posix;
 const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
 const acl = @import("acl.zig");
+const tracy = @import("tracy.zig");
+const trace = tracy.trace;
 
 const MAX_HEADER_SIZE = 8 * 1024;
 const MAX_BODY_SIZE = 5 * 1024 * 1024 * 1024;
@@ -190,7 +192,12 @@ pub fn main() !void {
 
     std.log.info("S3 server listening on http://0.0.0.0:{d}", .{port});
 
-    try eventLoopEpoll(allocator, &ctx, &server);
+    if (tracy.enable_allocation) {
+        var gpa_tracy = tracy.tracyAllocator(allocator);
+        try eventLoopEpoll(gpa_tracy.allocator(), &ctx, &server);
+    } else {
+        try eventLoopEpoll(allocator, &ctx, &server);
+    }
 }
 
 fn setNonBlocking(fd: posix.fd_t) void {
@@ -318,6 +325,9 @@ const Response = struct {
     }
 
     fn write(self: *Response, stream: net.Stream) !void {
+        const tracy_fun = trace(@src());
+        defer tracy_fun.end();
+
         var buf: [8192]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
         const w = fbs.writer();
@@ -376,6 +386,9 @@ const Response = struct {
 };
 
 fn parseRequestFromBuf(allocator: Allocator, data: []const u8, stream: net.Stream) !Request {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     const total_read = data.len;
     const line_end = std.mem.indexOf(u8, data, "\r\n") orelse return error.InvalidRequest;
     const request_line = data[0..line_end];
@@ -505,6 +518,8 @@ fn findHeaderEnd(data: []const u8) ?usize {
 }
 
 fn handleConnectionWithStream(allocator: Allocator, ctx: *const S3Context, stream: net.Stream) !bool {
+    tracy.frameMark();
+
     var buf: [MAX_HEADER_SIZE]u8 = undefined;
     var total_read: usize = 0;
 
@@ -571,6 +586,9 @@ pub fn isValidKey(key: []const u8) bool {
 }
 
 fn route(ctx: *const S3Context, allocator: Allocator, req: *Request, res: *Response) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     var path = req.path;
     if (path.len > 0 and path[0] == '/') path = path[1..];
 
@@ -669,6 +687,9 @@ pub const SigV4 = struct {
     };
 
     fn verify(ctx: *const S3Context, req: *const Request, allocator: Allocator) ACLCtx {
+        const tracy_fun = trace(@src());
+        defer tracy_fun.end();
+
         var acl_ctx = ACLCtx{
             .authenticated = false,
             .role = null,
@@ -960,6 +981,9 @@ pub fn sortQueryString(allocator: Allocator, query: []const u8) ![]const u8 {
 }
 
 fn handlePutObject(ctx: *const S3Context, allocator: Allocator, req: *Request, res: *Response, bucket: []const u8, key: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     // Keys ending with '/' are folder markers — store as ".folder_marker" file
     const effective_key = if (key.len > 0 and key[key.len - 1] == '/')
         try std.fmt.allocPrint(allocator, "{s}.folder_marker", .{key})
@@ -997,6 +1021,9 @@ fn handlePutObject(ctx: *const S3Context, allocator: Allocator, req: *Request, r
 }
 
 fn handleGetObject(ctx: *const S3Context, allocator: Allocator, req: *Request, res: *Response, bucket: []const u8, key: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     const effective_key = if (key.len > 0 and key[key.len - 1] == '/')
         try std.fmt.allocPrint(allocator, "{s}.folder_marker", .{key})
     else
@@ -1065,6 +1092,9 @@ fn handleGetObject(ctx: *const S3Context, allocator: Allocator, req: *Request, r
 }
 
 fn handleDeleteObject(ctx: *const S3Context, allocator: Allocator, res: *Response, bucket: []const u8, key: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     const effective_key = if (key.len > 0 and key[key.len - 1] == '/')
         try std.fmt.allocPrint(allocator, "{s}.folder_marker", .{key})
     else
@@ -1096,6 +1126,9 @@ fn deleteObjectInternal(ctx: *const S3Context, allocator: Allocator, bucket: []c
 }
 
 fn handleDeleteObjects(ctx: *const S3Context, allocator: Allocator, req: *Request, res: *Response, bucket: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     // Parse XML body: <Delete><Object><Key>...</Key></Object>...</Delete>
     var xml: std.ArrayListUnmanaged(u8) = .empty;
     defer xml.deinit(allocator);
@@ -1132,6 +1165,9 @@ fn handleDeleteObjects(ctx: *const S3Context, allocator: Allocator, req: *Reques
 }
 
 fn handleHeadObject(ctx: *const S3Context, allocator: Allocator, res: *Response, bucket: []const u8, key: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     const effective_key = if (key.len > 0 and key[key.len - 1] == '/')
         try std.fmt.allocPrint(allocator, "{s}.folder_marker", .{key})
     else
@@ -1182,6 +1218,9 @@ fn handleHeadObject(ctx: *const S3Context, allocator: Allocator, res: *Response,
 }
 
 fn handleListObjects(ctx: *const S3Context, allocator: Allocator, req: *Request, res: *Response, bucket: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     const prefix_raw = getQueryParam(req.query, "prefix") orelse "";
     const prefix = try uriDecode(allocator, prefix_raw);
     defer allocator.free(prefix);
@@ -1365,6 +1404,9 @@ fn collectKeys(allocator: Allocator, base_path: []const u8, current_prefix: []co
 }
 
 fn handleCreateBucket(ctx: *const S3Context, allocator: Allocator, res: *Response, bucket: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     const path = try ctx.bucketPath(allocator, bucket);
     defer allocator.free(path);
 
@@ -1380,6 +1422,9 @@ fn handleCreateBucket(ctx: *const S3Context, allocator: Allocator, res: *Respons
 }
 
 fn handleHeadBucket(ctx: *const S3Context, allocator: Allocator, res: *Response, bucket: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     const path = try ctx.bucketPath(allocator, bucket);
     defer allocator.free(path);
 
@@ -1393,6 +1438,9 @@ fn handleHeadBucket(ctx: *const S3Context, allocator: Allocator, res: *Response,
 }
 
 fn handleDeleteBucket(ctx: *const S3Context, allocator: Allocator, res: *Response, bucket: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     const path = try ctx.bucketPath(allocator, bucket);
     defer allocator.free(path);
 
@@ -1412,6 +1460,9 @@ fn handleDeleteBucket(ctx: *const S3Context, allocator: Allocator, res: *Respons
 }
 
 fn handleListBuckets(ctx: *const S3Context, allocator: Allocator, res: *Response) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     var dir = std.fs.cwd().openDir(ctx.data_dir, .{ .iterate = true }) catch {
         sendError(res, 500, "InternalError", "Cannot open data dir");
         return;
@@ -1451,6 +1502,9 @@ fn handleListBuckets(ctx: *const S3Context, allocator: Allocator, res: *Response
 }
 
 fn handleInitiateMultipart(ctx: *const S3Context, allocator: Allocator, res: *Response, bucket: []const u8, key: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     // Generate unique upload ID using timestamp + random bytes to prevent collision
     const timestamp: u64 = @intCast(std.time.timestamp());
     var random_bytes: [8]u8 = undefined;
@@ -1490,6 +1544,9 @@ fn handleInitiateMultipart(ctx: *const S3Context, allocator: Allocator, res: *Re
 }
 
 fn handleUploadPart(ctx: *const S3Context, allocator: Allocator, req: *Request, res: *Response, bucket: []const u8, key: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     _ = bucket;
     _ = key;
 
@@ -1532,6 +1589,9 @@ fn handleUploadPart(ctx: *const S3Context, allocator: Allocator, req: *Request, 
 }
 
 fn handleCompleteMultipart(ctx: *const S3Context, allocator: Allocator, req: *Request, res: *Response, bucket: []const u8, key: []const u8) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     const upload_id = getQueryParam(req.query, "uploadId") orelse {
         sendError(res, 400, "InvalidRequest", "Missing uploadId");
         return;
@@ -1642,6 +1702,9 @@ fn handleCompleteMultipart(ctx: *const S3Context, allocator: Allocator, req: *Re
 }
 
 fn handleAbortMultipart(ctx: *const S3Context, allocator: Allocator, req: *Request, res: *Response) !void {
+    const tracy_fun = trace(@src());
+    defer tracy_fun.end();
+
     const upload_id = getQueryParam(req.query, "uploadId") orelse {
         sendError(res, 400, "InvalidRequest", "Missing uploadId");
         return;
