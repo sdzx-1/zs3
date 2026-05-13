@@ -1,6 +1,6 @@
 # zs3
 
-S3-compatible storage in ~3K lines of Zig. Zero dependencies. Optional distributed mode.
+S3-compatible storage in ~3K lines of Zig. Zero dependencies.
 
 ## Why
 
@@ -25,17 +25,6 @@ Most S3 usage is PUT, GET, DELETE, LIST with basic auth. You don't need 200k lin
 - HTTP 100-continue support (boto3 compatible)
 - AWS chunked transfer encoding support
 - ~360KB static binary
-
-**Distributed Mode (IPFS-like):**
-- Content-addressed storage with BLAKE3 hashing
-- Automatic deduplication across the network
-- Full Kademlia DHT for peer/content discovery
-- Peer-to-peer content transfer with quorum reads
-- Inline storage for small objects (<4KB)
-- Tombstone-based deletes (prevents resurrection)
-- Block garbage collector with grace period
-- Zero-config LAN discovery ready
-- Same S3 API - works with existing tools
 
 ## What it doesn't do
 
@@ -73,38 +62,6 @@ Format: `role:access_key:secret_key`, comma-separated. Roles:
 
 Other useful flags: `--port=PORT`, `--data-dir=PATH`, `--help`.
 
-## Distributed Mode
-
-```bash
-# Node 1
-./zs3 --distributed --port=9000
-
-# Node 2 (connects to Node 1)
-./zs3 --distributed --port=9001 --bootstrap=localhost:9000
-
-# Node 3
-./zs3 --distributed --port=9002 --bootstrap=localhost:9000,localhost:9001
-```
-
-All nodes share the same S3 API. PUT on any node, GET from any node.
-
-**Storage Layout (distributed):**
-```
-data/
-├── .node_id              # Persistent 160-bit node identity
-├── .cas/                 # Content-Addressed Store
-│   └── ab/abc123...blob  # Files stored by BLAKE3 hash
-├── .index/               # S3 path → content hash mapping
-│   └── bucket/key.meta
-└── bucket/               # (standalone mode only)
-```
-
-**Peer Protocol:**
-```bash
-curl http://localhost:9000/_zs3/ping           # Node health + ID
-curl http://localhost:9000/_zs3/peers          # Known peers
-curl http://localhost:9000/_zs3/providers/HASH # Who has content
-```
 
 ## Usage
 
@@ -187,8 +144,6 @@ zig build test                               # run tests
 zig build test                  # ~30 unit tests
 python3 test_client.py          # 24/24 integration tests (stdlib only)
 python3 test_comprehensive.py   # 66/66 boto3 tests (standalone)
-./zs3 --distributed && \
-python3 test_comprehensive.py   # 71/71 boto3 tests (distributed)
 ```
 
 Requires `pip install boto3` for comprehensive tests.
